@@ -1,18 +1,20 @@
-# Group Report: Lab 3 - Production-Grade Agentic System
+# Group Report: Lab 3 - Chatbot vs ReAct Agent (Repository-Aligned)
 
 - **Team Name**: C401-C2
 - **Team Members**: Nguyễn Thùy Linh, Bùi Minh Ngọc, Phạm Việt Anh, Phạm Việt Hoàng, Phan Tuấn Minh, Lê Đức Thanh
-- **Deployment Date**: 2026-04-06
+- **Report Date**: 2026-04-06
 
 ---
 
 ## 1. Executive Summary
 
-This project upgrades a baseline chatbot into a ReAct-style agent with tool-calling and structured telemetry.  
-The agent was evaluated against the chatbot on 3 practical travel-planning scenarios using OpenAI `gpt-4o`.
+This repository contains a travel-planning ReAct agent prototype with:
+- ReAct loop implementation (`Thought -> Action -> Observation -> Final Answer`).
+- Mock travel tools for deterministic development/testing.
+- Provider abstraction for OpenAI-compatible APIs, Gemini, and local GGUF model execution.
+- Structured telemetry (JSON log events + metric tracker utilities).
 
-- **Success Rate**: 100% (latest 3-case run, no timeout/fallback).
-- **Key Outcome**: Agent produced grounded multi-step answers by using tools and looped observations, while chatbot produced longer but less grounded direct responses.
+Based on the current repository state, this report only states claims that are verifiable from checked-in code and files.
 
 ---
 
@@ -20,88 +22,77 @@ The agent was evaluated against the chatbot on 3 practical travel-planning scena
 
 ### 2.1 ReAct Loop Implementation
 Implemented in `src/agent/agent.py`:
-- Thought -> Action -> Observation loop.
-- Action parsing and dynamic tool execution.
-- Max-step guardrails.
-- Early-final and fallback-final safety logic.
+- Iterative loop with step budget (`max_steps`, default 6).
+- Parsing blocks: `Thought`, `Action`, `Final Answer`.
+- Tool call execution and observation feedback into the next prompt.
+- Session-level metric reporting through `tracker.get_session_summary()`.
 
-### 2.2 Tool Definitions (Inventory)
-| Tool Name | Input Format | Use Case |
-| :--- | :--- | :--- |
-| `suggest_destinations` | `string` | Suggest destination options by preference |
-| `check_weather` | `string` | Retrieve weather summary |
-| `search_flights` | `string` | Estimate flight cost |
-| `search_hotels` | `string` | Estimate hotel cost |
-| `get_attractions` | `string` | List attractions |
-| `calculate_total_cost` | `string` | Estimate total trip cost |
+### 2.2 Tool Inventory (Current Mock Tools)
+Defined in `src/tools/mock_tools.py`:
 
-### 2.3 LLM Providers Used
-- **Primary**: OpenAI `gpt-4o`
-- **Secondary (Backup)**: Local/Google provider interfaces available in `src/core` (not primary in final run)
+| Tool Name | Purpose |
+| :--- | :--- |
+| `suggest_destinations` | Suggest destinations by travel constraints |
+| `check_weather` | Return weather conditions for a destination |
+| `search_flights` | Provide candidate flight options |
+| `search_hotels` | Provide candidate hotel options |
+| `get_attractions` | Return notable attractions |
+| `calculate_total_cost` | Estimate total trip cost and remaining budget |
 
----
+### 2.3 LLM Provider Layer
+Implemented in `src/core/`:
+- `llm_provider.py`: abstract provider interface (`generate`, `stream`).
+- `openai_provider.py`: OpenAI-compatible chat completion provider.
+- `gemini_provider.py`: Google Gemini provider.
+- `local_provider.py`: local GGUF provider via `llama-cpp-python`.
 
-## 3. Telemetry & Performance Dashboard
-
-Data sources:
-- `report/group_report/COMPARISON_RESULTS.md`
-- `report/group_report/FAILURE_ANALYSIS_LATEST.md`
-- `logs/2026-04-06.log`
-
-Latest run metrics:
-- **Average Latency (all LLM calls)**: 2012.6 ms
-- **P95 Latency**: 4722 ms
-- **Average Tokens per Request**: 504.8
-- **Agent Status Breakdown**: success=3, fallback=0, timeout=0, parse_error=0
-
-Comparison table (latest run):
-
-| Case | Chatbot (tokens / latency / steps) | Agent (tokens / latency / steps) |
-| :--- | :--- | :--- |
-| Toi muon du lich bien nhung chua biet di dau | 277 / 3076ms / 1 | 914 / 5788ms / 2 |
-| Tu van ke hoach Da Nang 3N2D voi ngan sach 10 trieu | 625 / 5642ms / 1 | 3328 / 9861ms / 6 |
-| So sanh Da Nang va Nha Trang cho chuyen di ngan ngay | 442 / 3596ms / 1 | 2996 / 6252ms / 6 |
+In test scripts (`tests/test_agent_run.py`, `tests/test_chat.py`), runtime defaults currently use OpenRouter credentials through `OpenAIProvider`.
 
 ---
 
-## 4. Root Cause Analysis (RCA) - Failure Traces
+## 3. Telemetry & Evaluation Status
 
-### Case Study: Step-Budget Exhaustion in Comparison/Discovery Queries (v1)
-- **Input**: comparison and discovery prompts requiring many sub-facts.
-- **Observation**: v1 sometimes reached `max_steps` before emitting `Final Answer`.
-- **Root Cause**: planner continued collecting extra context instead of summarizing when sufficient evidence already existed.
-- **Fix Applied (v2)**:
-  - Added `AGENT_EARLY_FINAL` logic for comparison/discovery intent.
-  - Added structured fallback final answer when step limit is reached.
-  - Improved loop termination behavior using observed tool outputs.
+Telemetry components are implemented:
+- `src/telemetry/logger.py`: structured JSON logging to `logs/YYYY-MM-DD.log`.
+- `src/telemetry/metrics.py`: token, cost, latency, efficiency, percentile/stat summary.
+- `tests/analyze_metrics.py`: parser/summary script for generated logs.
 
-Latest validation result:
-- No timeout/fallback in the latest 3-case benchmark run.
+Current artifact status in this repository:
+- No `logs/` directory is checked in.
+- No checked-in benchmark result files for chatbot-vs-agent comparison are present under `report/group_report/`.
 
----
-
-## 5. Ablation Studies & Experiments
-
-### Experiment 1: Agent v1 vs Agent v2
-- **Diff**: Added early-final + fallback synthesis from observations.
-- **Result**: Latest benchmark moved from timeout/fallback risks to stable completion on all cases.
-
-### Experiment 2: Chatbot vs Agent
-| Case | Chatbot Result | Agent Result | Winner |
-| :--- | :--- | :--- | :--- |
-| Simple ideation | Fluent generic text | Tool-grounded but concise | Draw |
-| Budget planning | Generic estimate | Tool-based calculable estimate | **Agent** |
-| Destination comparison | Generic narrative | Explicit cost/weather/attraction comparison | **Agent** |
+Therefore, numeric benchmark claims (success rate, p95 latency, per-case token tables) are not included in this corrected report.
 
 ---
 
-## 6. Production Readiness Review
+## 4. Observed Risks and Gaps (From Current Code)
 
-- **Security**: Validate tool arguments before execution; reject unknown tool calls.
-- **Guardrails**: `max_steps`, parse-error logging, early-final/fallback-final.
-- **Scaling**: Add retrieval/search APIs, async tool execution, and intent-based tool routing.
+1. The agent enforces `max_steps`, but there is no dedicated early-stop policy module beyond prompt instructions and `Final Answer` parsing.
+2. Tool invocation currently uses mock responses; there is no real external API integration in `src/tools/`.
+3. The group-level comparison artifact expected by scoring guidance is missing (no checked-in chatbot-vs-agent evaluation table generated from logs).
+
+---
+
+## 5. Improvement Plan (Aligned with Scoring Criteria)
+
+1. Add reproducible benchmark artifacts:
+  - Commit logs generated from fixed test scenarios.
+  - Export chatbot-vs-agent comparison tables to markdown in `report/group_report/`.
+2. Strengthen guardrails:
+  - Add robust action parsing and explicit error categories (parse error, unknown tool, timeout).
+  - Add retry/repair behavior when action format is invalid.
+3. Increase production realism:
+  - Replace or complement mock tools with real data connectors.
+  - Add schema validation for tool arguments and output contracts.
+
+---
+
+## 6. Conclusion
+
+The repository already demonstrates the core architecture expected in Lab 3: ReAct loop, provider abstraction, and telemetry scaffolding.  
+To fully satisfy evaluation/reporting requirements, the team should add reproducible run artifacts and checked-in comparison evidence derived from actual logs.
 
 ---
 
 > [!NOTE]
-> If required by instructor, include one architecture flowchart image and attach run command screenshots.
+> This file was corrected to match the currently available repository artifacts and implementation details.
